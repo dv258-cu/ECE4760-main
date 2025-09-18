@@ -7,12 +7,12 @@
  *
  * SPDX-License-Identifier: BSD-3-Clause
  *
-   GPIO 5 (pin 7) Chip select
-   GPIO 6 (pin 9) SCK/spi0_sclk
+   GPIO 5 (pin 7) Chip select 2
+   GPIO 6 (pin 9) SCK/spi0_sclk 3
    GPIO 7 (pin 10) MOSI/spi0_tx
-   GPIO 2 (pin 4) GPIO output for timing ISR
-   3.3v (pin 36) -> VCC on DAC 
-   GND (pin 3)  -> GND on DAC 
+   GPIO 2 (pin 4) GPIO output for timing ISR 6
+   3.3v (pin 36) -> VCC on DAC 1
+   GND (pin 3)  -> GND on DAC 7
  */
 
 #include <stdio.h>

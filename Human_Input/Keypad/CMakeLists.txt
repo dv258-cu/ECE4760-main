@@ -1,3 +1,19 @@
+# == DO NOT EDIT THE FOLLOWING LINES for the Raspberry Pi Pico VS Code Extension to work ==
+if(WIN32)
+    set(USERHOME $ENV{USERPROFILE})
+else()
+    set(USERHOME $ENV{HOME})
+endif()
+set(sdkVersion 2.2.0)
+set(toolchainVersion 14_2_Rel1)
+set(picotoolVersion 2.2.0)
+set(picoVscode ${USERHOME}/.pico-sdk/cmake/pico-vscode.cmake)
+if (EXISTS ${picoVscode})
+    include(${picoVscode})
+endif()
+# ====================================================================================
+set(PICO_BOARD pico CACHE STRING "Board type")
+
 # cmake version
 cmake_minimum_required(VERSION 3.13)
 
@@ -21,7 +37,7 @@ pico_generate_pio_header(Keypad ${CMAKE_CURRENT_LIST_DIR}/rgb.pio)
 target_sources(Keypad PRIVATE keypad.c vga16_graphics_v2.c)
 
 # must match with executable name
-target_link_libraries(Keypad PRIVATE pico_stdlib pico_multicore pico_bootsel_via_double_reset hardware_pio hardware_dma hardware_sync hardware_spi hardware_clocks)
+target_link_libraries(Keypad PRIVATE pico_stdlib pico_multicore pico_bootsel_via_double_reset hardware_pio hardware_dma hardware_sync hardware_spi hardware_clocks pico_bootsel_via_double_reset)
 
 # must match with executable name
 pico_add_extra_outputs(Keypad)

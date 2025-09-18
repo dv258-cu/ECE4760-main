@@ -133,7 +133,7 @@ static void alarm_irq(void) {
         // Increment the counter
         count_0 += 1 ;
 
-        // State transition?
+        // State transition? 
         if (count_0 == BEEP_DURATION) {
             STATE_0 = 1 ;
             count_0 = 0 ;
