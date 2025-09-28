@@ -246,7 +246,7 @@ static void alarm_irq(void) {
         
         // DDS phase and sine table lookup
         volatile unsigned int frequency  = 
-                two32 * ((1.84 * 0.0001) * (count_0 * count_0) + 2000) / Fs;
+                two32 * ((1.6 * 0.0001) * (count_0 * count_0) + 2000) / Fs;
 
         phase_accum_chirp += frequency;
 
