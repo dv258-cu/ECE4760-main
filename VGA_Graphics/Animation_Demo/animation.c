@@ -218,6 +218,20 @@ typedef struct {
 // Global one ball + one peg 
 Ball balls[4096];
 
+//initialize the ball member values
+void initBalls(){
+  for (int i  = 0; i < 4096; i++){
+    balls[i].x = int2fix15(320);
+    balls[i].y = int2fix15(0);
+    fix15 rand_vx = ((int2fix15(rand() & 0xffff)>>16) - (int2fix15(1)>>1));
+    balls[i].vx = rand_vx;
+    balls[i].vy = int2fix15(0);
+    balls[i].last_peg = -1;                        //here I reset the last peg to -1 when we spawn a new ball
+  }
+}
+
+
+
 Peg pegs[NUMBER_OF_PEGS];        // global array that stores the position of all 136 pegs 
 
 int total_balls = 0;              // total number of balls that have fallen through the board
@@ -467,6 +481,9 @@ static PT_THREAD (protothread_anim(struct pt *pt))
     static int begin_time ;
     static int spare_time ;
 
+    //intialze the balls
+    initBalls();
+
     // spawn balls 
     for (int i  = 0; i < result; i++){
       spawn_ball(&balls[i]);
@@ -480,6 +497,10 @@ static PT_THREAD (protothread_anim(struct pt *pt))
       result = adc_read();
       printf("%d\n", result);
 
+      //reset the histogram bins after getting the new potentiometer value
+      // for (int i= 0; i < NUM_BINS; i++){
+      //   balls_in_bins[i] = 0;
+      // }
 
       // erase the old balls
       for (int i  = 0; i < result; i++){
