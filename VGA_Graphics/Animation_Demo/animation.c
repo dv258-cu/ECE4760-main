@@ -106,7 +106,7 @@ int ctrl_chan;
 // int data_chan, ctrl_chan;
 void DMA_setup() {
 
-    // Initidalize stdio
+    // Initialize stdio
     stdio_init_all();
 
     // Initialize SPI channel (channel, baud rate set to 20MHz)
@@ -265,8 +265,8 @@ void draw_pegs(){
       pegs[peg_index].x = int2fix15(start_x + col * HORIZONTAL_SEPARATION);  // space the pegs horizontally starting from start_x and incrementing by HORIZONTAL_SEPARATION
       pegs[peg_index].y = int2fix15(start_y + row * VERTICAL_SEPARATION);    // space the pegs vertically starting from start_y and incrementing by VERTICAL_SEPARATION
 
-      //fillCircle(fix2int15(pegs[peg_index].x), fix2int15(pegs[peg_index].y), PEG_RADIUS, GREEN);
-      drawCircle(fix2int15(pegs[peg_index].x), fix2int15(pegs[peg_index].y), PEG_RADIUS, GREEN);
+      fillCircle(fix2int15(pegs[peg_index].x), fix2int15(pegs[peg_index].y), PEG_RADIUS, GREEN);
+      //drawCircle(fix2int15(pegs[peg_index].x), fix2int15(pegs[peg_index].y), PEG_RADIUS, GREEN);
 
 
       peg_index++;
@@ -369,7 +369,7 @@ void update_ball_based_on_collision() {
               //Make a thunk sound by starting the control channel
               dma_start_channel_mask(1u << ctrl_chan);
 
-              //uodate last peg
+              // update last peg
               balls[i].last_peg = j;
             }
 
@@ -386,7 +386,7 @@ void update_ball_based_on_collision() {
 
         //find which bin the ball fallls into
         int bin_width = HORIZONTAL_SEPARATION;                     //same spacingg as pegs
-        int start_bin_x = 320 - NUM_BINS * bin_width / 2;                       //start x position of histogram
+        int start_bin_x = 322 - NUM_BINS * bin_width / 2;                       //start x position of histogram
 
         int bin_index = (fix2int15(balls[i].x) - start_bin_x) / bin_width;
         if (bin_index >= 0 && bin_index < NUM_BINS){
@@ -504,9 +504,8 @@ static PT_THREAD (protothread_anim(struct pt *pt))
 
       // erase the old balls
       for (int i  = 0; i < result; i++){
-        //fillCircle(fix2int15(balls[i].x), fix2int15(balls[i].y), BALL_RADIUS, BLACK);
-        drawCircle(fix2int15(balls[i].x), fix2int15(balls[i].y), BALL_RADIUS, BLACK);
-
+        fillCircle(fix2int15(balls[i].x), fix2int15(balls[i].y), BALL_RADIUS, BLACK);
+        //drawCircle(fix2int15(balls[i].x), fix2int15(balls[i].y), BALL_RADIUS, BLACK);
       }
 
       // update all balls once 
@@ -514,8 +513,8 @@ static PT_THREAD (protothread_anim(struct pt *pt))
   
       // redraw new balls 
       for (int i  = 0; i < result; i++){
-        //fillCircle(fix2int15(balls[i].x), fix2int15(balls[i].y), BALL_RADIUS, RED);
-        drawCircle(fix2int15(balls[i].x), fix2int15(balls[i].y), BALL_RADIUS, RED);
+        fillCircle(fix2int15(balls[i].x), fix2int15(balls[i].y), BALL_RADIUS, RED);
+        //drawCircle(fix2int15(balls[i].x), fix2int15(balls[i].y), BALL_RADIUS, RED);
       }
 
       //draw new peg 
