@@ -38,6 +38,7 @@
 #include "hardware/clocks.h"
 #include "hardware/pll.h"
 #include "hardware/spi.h"
+#include "hardware/adc.h"
 
 
 // Include protothreads
@@ -59,9 +60,12 @@ typedef signed int fix15 ;
 #define hitTop(b) (b<int2fix15(100))
 #define hitLeft(a) (a<int2fix15(100))
 #define hitRight(a) (a>int2fix15(540))
+#define topHistogramTop(b) (b>int2fix15(HISTOGRAM_Y_START))
 
 // uS per frame
 #define FRAME_RATE 33000
+#define POTENTIOMETER_OUTPUT_PIN 27
+
 
 // the color of the boid
 char color = WHITE;
@@ -173,13 +177,15 @@ void DMA_setup() {
 
 #define BALL_RADIUS 4
 #define PEG_RADIUS  6
-#define GRAVITY float2fix15(0.75)
+#define GRAVITY float2fix15(0.5)
 #define BOUNCINESS float2fix15(0.5)
 #define VERTICAL_SEPARATION 19
 #define HORIZONTAL_SEPARATION 38
 #define NUMBER_OF_PEGS 136   // number of pegs = n(n+1)/2 = 16 (16 + 1) / 2 = 16 * 17 / 2 = 136 pegs 
-#define NUMBER_OF_BALLS 10
 
+
+//global variable for number of balls
+uint16_t result;
 
 // Histogram Specs
 #define NUM_BINS 17                               // total no of bins 17 since we have 15 spaces btwn the 16 pegs plus two more for the edges
@@ -210,7 +216,8 @@ typedef struct {
 } Peg;
 
 // Global one ball + one peg 
-Ball balls[NUMBER_OF_BALLS];
+Ball balls[4096];
+
 Peg pegs[NUMBER_OF_PEGS];        // global array that stores the position of all 136 pegs 
 
 int total_balls = 0;              // total number of balls that have fallen through the board
@@ -244,7 +251,9 @@ void draw_pegs(){
       pegs[peg_index].x = int2fix15(start_x + col * HORIZONTAL_SEPARATION);  // space the pegs horizontally starting from start_x and incrementing by HORIZONTAL_SEPARATION
       pegs[peg_index].y = int2fix15(start_y + row * VERTICAL_SEPARATION);    // space the pegs vertically starting from start_y and incrementing by VERTICAL_SEPARATION
 
-      fillCircle(fix2int15(pegs[peg_index].x), fix2int15(pegs[peg_index].y), PEG_RADIUS, GREEN);
+      //fillCircle(fix2int15(pegs[peg_index].x), fix2int15(pegs[peg_index].y), PEG_RADIUS, GREEN);
+      drawCircle(fix2int15(pegs[peg_index].x), fix2int15(pegs[peg_index].y), PEG_RADIUS, GREEN);
+
 
       peg_index++;
 
@@ -269,18 +278,13 @@ void draw_histogram(){
   int bin_width = HORIZONTAL_SEPARATION;                     //same spacingg as pegs
   int histogram_width = NUM_BINS * bin_width;                //total width of histogram
 
-  int start_bin_x = 320 - histogram_width / 2;                       //start x position of histogram
+  int start_bin_x = 322 - histogram_width / 2;                       //start x position of histogram
 
   // draw the histogram
   for (int i = 0; i < NUM_BINS; i++){
     int bin_height = balls_in_bins[i] * HISTOGRAM_HEIGHT / max_count;   //scale the height of each bar
 
-    // clear old column
-    fillRect(start_bin_x + i * bin_width,                    // top left x position 
-            HISTOGRAM_Y_START,                               // top left y position
-            bin_width - 2,                                   // width      
-            HISTOGRAM_HEIGHT,                                // height        
-            BLACK);                                          // color
+    // // clear old column
 
     // draw new column (bars grow upward)
     fillRect(start_bin_x + i * bin_width,                           // top left x position
@@ -300,7 +304,7 @@ fix15 sqrt_beta = float2fix15(.3978);
 void update_ball_based_on_collision() {
 
   // Each frame we update every ball
-  for (int i  = 0; i < NUMBER_OF_BALLS; i++){
+  for (int i  = 0; i < result; i++){
 
     // Every ball we loook at every peg
     for (int j = 0; j < NUMBER_OF_PEGS; j++){
@@ -363,7 +367,7 @@ void update_ball_based_on_collision() {
     }
   
       //Re-spwan any balls that hit thru bottom
-      if (hitBottom(balls[i].y)){
+      if (topHistogramTop(balls[i].y)){
         total_balls += 1;
 
         //find which bin the ball fallls into
@@ -420,7 +424,7 @@ static PT_THREAD (protothread_write_to_screen(struct pt *pt)){
       // number of balls being animated
       setTextSize(1);
       setCursor(20 , 20);
-      sprintf(balls_being_animated, "Active Particles: %d", NUMBER_OF_BALLS);
+      sprintf(balls_being_animated, "Active Particles: %d", result);
       writeString(balls_being_animated);
 
       // total number of balls that have fallen through the board since reset
@@ -464,7 +468,7 @@ static PT_THREAD (protothread_anim(struct pt *pt))
     static int spare_time ;
 
     // spawn balls 
-    for (int i  = 0; i < NUMBER_OF_BALLS; i++){
+    for (int i  = 0; i < result; i++){
       spawn_ball(&balls[i]);
     }
     
@@ -472,21 +476,33 @@ static PT_THREAD (protothread_anim(struct pt *pt))
       // Measure time at start of thread
       begin_time = time_us_32() ;   
 
+      //read potentiometer
+      result = adc_read();
+      printf("%d\n", result);
+
+
       // erase the old balls
-      for (int i  = 0; i < NUMBER_OF_BALLS; i++){
-        fillCircle(fix2int15(balls[i].x), fix2int15(balls[i].y), BALL_RADIUS, BLACK); 
+      for (int i  = 0; i < result; i++){
+        //fillCircle(fix2int15(balls[i].x), fix2int15(balls[i].y), BALL_RADIUS, BLACK);
+        drawCircle(fix2int15(balls[i].x), fix2int15(balls[i].y), BALL_RADIUS, BLACK);
+
       }
 
       // update all balls once 
       update_ball_based_on_collision();
   
       // redraw new balls 
-      for (int i  = 0; i < NUMBER_OF_BALLS; i++){
-        fillCircle(fix2int15(balls[i].x), fix2int15(balls[i].y), BALL_RADIUS, RED);
+      for (int i  = 0; i < result; i++){
+        //fillCircle(fix2int15(balls[i].x), fix2int15(balls[i].y), BALL_RADIUS, RED);
+        drawCircle(fix2int15(balls[i].x), fix2int15(balls[i].y), BALL_RADIUS, RED);
       }
 
       //draw new peg 
       draw_pegs();
+
+      //clear old histogram
+      //clear old colums
+      clearLowFrame(HISTOGRAM_Y_START, BLACK);
 
       //draw histogram
       draw_histogram();
@@ -526,6 +542,11 @@ int main(){
   // initialize VGA
   initVGA() ;
   DMA_setup(); // setup DMA for audio
+
+  //initialie adc
+  adc_init();
+  adc_gpio_init(POTENTIOMETER_OUTPUT_PIN);
+  adc_select_input(1);
 
   // start core 1 
   multicore_reset_core1();

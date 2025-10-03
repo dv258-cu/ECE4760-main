@@ -39,7 +39,7 @@ pico_generate_pio_header(VGA_Animation_Demo ${CMAKE_CURRENT_LIST_DIR}/rgb.pio)
 target_sources(VGA_Animation_Demo PRIVATE animation.c vga16_graphics_v2.c)
 
 # must match with executable name
-target_link_libraries(VGA_Animation_Demo PRIVATE pico_stdlib pico_divider pico_multicore pico_bootsel_via_double_reset hardware_pio hardware_dma hardware_adc hardware_irq hardware_clocks hardware_pll hardware_spi)
+target_link_libraries(VGA_Animation_Demo PRIVATE pico_stdlib pico_divider pico_multicore pico_bootsel_via_double_reset hardware_pio hardware_dma hardware_adc hardware_irq hardware_clocks hardware_pll hardware_spi hardware_adc)
 
 # must match with executable name
 pico_add_extra_outputs(VGA_Animation_Demo)
