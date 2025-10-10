@@ -55,20 +55,11 @@ typedef signed int fix15 ;
 #define char2fix15(a) (fix15)(((fix15)(a)) << 15)
 #define divfix(a,b) (fix15)(div_s64s64( (((signed long long)(a)) << 15), ((signed long long)(b))))
 
-// Wall detection
-#define hitBottom(b) (b>int2fix15(480))
-#define hitTop(b) (b<int2fix15(100))
-#define hitLeft(a) (a<int2fix15(100))
-#define hitRight(a) (a>int2fix15(540))
 #define topHistogramTop(b) (b>int2fix15(HISTOGRAM_Y_START))
 
 // uS per frame
 #define FRAME_RATE 33000
 #define POTENTIOMETER_OUTPUT_PIN 27
-
-
-// the color of the boid
-char color = WHITE;
 
 
 /*
@@ -175,31 +166,30 @@ void DMA_setup() {
 }
 
 
-#define BALL_RADIUS 4
-#define PEG_RADIUS  6
-#define GRAVITY float2fix15(0.5)
+#define BALL_RADIUS 6
+#define PEG_RADIUS  8
+#define GRAVITY float2fix15(0.75)
 #define BOUNCINESS float2fix15(0.5)
-#define VERTICAL_SEPARATION 19
-#define HORIZONTAL_SEPARATION 38
-#define NUMBER_OF_PEGS 136   // number of pegs = n(n+1)/2 = 16 (16 + 1) / 2 = 16 * 17 / 2 = 136 pegs 
+
+#define X_CENTER int2fix15(320)
 
 
-//global variable for number of balls
-uint16_t result;
 
-// Histogram Specs
-#define NUM_BINS 17                               // total no of bins 17 since we have 15 spaces btwn the 16 pegs plus two more for the edges
-int balls_in_bins[NUM_BINS];                      //counter for each bin
+fix15 fixmag(fix15 x, fix15 y) {
 
-/*
-  Math for space left for histogram
-  first peg starts at y = 60 and vertival separation = 19 so bottom row y is  = start_y + (16 -1 ) * vertical_separation 
-  = 60 + 15 * 19 = 60 + 285 = 345: 
-  but each peg is circular with radi of 6 so end of last peg is 345 + 6 = 351 
-*/
+  // Some constants
+  fix15 sqrt_alpha = float2fix15(.9604);
+  fix15 sqrt_beta = float2fix15(.3978);
 
-#define HISTOGRAM_Y_START 360 
-#define HISTOGRAM_HEIGHT  100 
+  fix15 r;
+  if (absfix15(x) <= absfix15(y)) {
+    r = multfix15(absfix15(y), sqrt_alpha) + multfix15(absfix15(x), sqrt_beta);
+  } else {
+     r  = multfix15(absfix15(x), sqrt_alpha) + multfix15(absfix15(y), sqrt_beta);
+  }
+
+  return r;
+}
 
 // Ball Struct 
 typedef struct {
@@ -207,7 +197,6 @@ typedef struct {
   fix15 y;
   fix15 vx;
   fix15 vy;
-  int last_peg;            // last peg that the ball hit 
 } Ball;
 
 typedef struct {
@@ -215,194 +204,149 @@ typedef struct {
   fix15 y;
 } Peg;
 
-// Global one ball + one peg 
-Ball balls[4096];
-
-//initialize the ball member values
-void initBalls(){
-  for (int i  = 0; i < 4096; i++){
-    balls[i].x = int2fix15(320);
-    balls[i].y = int2fix15(0);
-    fix15 rand_vx = ((int2fix15(rand() & 0xffff)>>16) - (int2fix15(1)>>1));
-    balls[i].vx = rand_vx;
-    balls[i].vy = int2fix15(0);
-    balls[i].last_peg = -1;                        //here I reset the last peg to -1 when we spawn a new ball
-  }
-}
-
-
-
-Peg pegs[NUMBER_OF_PEGS];        // global array that stores the position of all 136 pegs 
-
-int total_balls = 0;              // total number of balls that have fallen through the board
-
 // ball starts at the top(centered) and falls down with a small random x velocity
-void spawn_ball(Ball* b) {
-  b->x = int2fix15(320);
-  b->y = int2fix15(0);
+// void spawn_ball(Ball* b) {
+//   b->x = int2fix15(320);
+//   b->y = int2fix15(0);
+//   fix15 rand_vx = ((int2fix15(rand() & 0xffff)>>16) - (int2fix15(1)>>1));
+//   b->vx = rand_vx;
+//   b->vy = int2fix15(0);
+// }
+
+
+// Set to true to activate debug mode
+bool debug_flag = false;
+
+Peg peg;
+
+// Sets inital peg parameters
+void init_peg() {
+  peg.x = X_CENTER;
+  peg.y = int2fix15(75);
+  
+  fillCircle(fix2int15(peg.x), fix2int15(peg.y), PEG_RADIUS, GREEN);
+}
+
+void update_peg() {
+  fillCircle(fix2int15(peg.x), fix2int15(peg.y), PEG_RADIUS, GREEN);
+}
+
+void animate_peg() {
+  update_peg();
+}
+
+
+Ball ball;
+
+void spawn_ball() {
+  fillCircle(fix2int15(ball.x), fix2int15(ball.y), BALL_RADIUS, BLACK);
+
   fix15 rand_vx = ((int2fix15(rand() & 0xffff)>>16) - (int2fix15(1)>>1));
-  b->vx = rand_vx;
-  b->vy = int2fix15(0);
-  b->last_peg = -1;                        //here I reset the last peg to -1 when we spawn a new ball
+
+  ball.x = X_CENTER;
+  ball.y = int2fix15(0);
+  ball.vx = rand_vx;
+  ball.vy = int2fix15(0);
+
+  fillCircle(fix2int15(ball.x), fix2int15(ball.y), BALL_RADIUS, LIGHT_BLUE);
+}
+
+void clear_ball() { fillCircle(fix2int15(ball.x), fix2int15(ball.y), BALL_RADIUS, BLACK); }
+void draw_ball() { fillCircle(fix2int15(ball.x), fix2int15(ball.y), BALL_RADIUS, LIGHT_BLUE); }
+
+void update_ball() {
+  // Update ball position with velocity
+  ball.x = ball.x + ball.vx;
+  ball.y = ball.y + ball.vy;
+
+  // Include gravity
+  ball.vy = ball.vy + GRAVITY;
+}
+
+void animate_ball() {
+  // Erase previous ball first
+  clear_ball();
+
+  // Update ball's physical parameters
+  update_ball();
+
+  // Draw new ball with updated information
+  draw_ball();
+
+  if (ball.y >= int2fix15(480)) {
+    spawn_ball();
+  }
+}
+
+// Collision variables
+fix15 next_ball_x() { return ball.x + ball.vx; }
+fix15 next_ball_y() { return ball.y + ball.vy; }
+
+fix15 dx;
+fix15 dy;
+fix15 dr;
+
+// Do this on collision
+void on_collision() {
+  clear_ball();
+
+  fix15 normal_x = divfix(dx, dr);
+  fix15 normal_y = divfix(dy, dr);
+
+  fix15 intermediate_term = multfix15(int2fix15(-2), (multfix15(normal_x, ball.vx) + multfix15(normal_y, ball.vy)));
+  if (intermediate_term > int2fix15(0)) {
+    ball.x = peg.x + multfix15(normal_x, dr + int2fix15(1));
+    ball.y = peg.y + multfix15(normal_y, dr + int2fix15(1));
+
+    ball.vx = ball.vx + multfix15(normal_x, intermediate_term);
+    ball.vy = ball.vy + multfix15(normal_y, intermediate_term);
+  }
+  update_peg();
+}
+
+// Checks if the ball collided every frame
+bool check_collision() {
+
+  // 1D deltas between center of ball and center of peg
+  fix15 next_dx = next_ball_x() - peg.x;
+  fix15 next_dy = next_ball_y() - peg.y;
+  fix15 next_dr = fixmag(next_dx, next_dy);
+  dx = ball.x - peg.x;
+  dy = ball.y - peg.y;
+  dr = fixmag(dx, dy);
+  
+  fix15 avg_dx = divfix(next_dx + dx, int2fix15(2));
+  fix15 avg_dy = divfix(next_dy + dy, int2fix15(2));
+  fix15 avg_dr = divfix(next_dr + dr, int2fix15(2));
+
+
+ 
+  if (absfix15(avg_dr) <= int2fix15(PEG_RADIUS + BALL_RADIUS)) {
+    return true;
+  }
+  return false;
 }
 
 
-// function to draw pegs on screen: 16 rows 
-void draw_pegs(){
-  const int screen_center_x = 320;         // middle of screen( 640 / 2 )
-  const int start_y = 60;                  // start y position for the first peg
+void init_collision_debugger() { drawCircle(320, 100, 17, RED); }
+void update_collision_debugger() { drawCircle(320, 100, 17, RED); }
 
-  int row = 0;
-  int peg_index = 0;
+// Called once at program start
+void start() {
+  spawn_ball();
+  init_peg();
 
-  while (peg_index < NUMBER_OF_PEGS){
-    int pegs_in_row = row + 1;              // peg in this row so row 0 has 1 peg, row 1 has 2 pegs, row 2 has 3 and so on
-    int start_x = screen_center_x - ((pegs_in_row - 1) * HORIZONTAL_SEPARATION) / 2;  // center each row by shifting first peg to the left so 1st row is at 320, 
-                                                                                      // 2nd row is at 301 and 339 , 3rd row is a7 282, 320 and 358 etc
-
-    // inner loop to draw each peg in the row
-    for (int col = 0; col < pegs_in_row; col ++){
-      pegs[peg_index].x = int2fix15(start_x + col * HORIZONTAL_SEPARATION);  // space the pegs horizontally starting from start_x and incrementing by HORIZONTAL_SEPARATION
-      pegs[peg_index].y = int2fix15(start_y + row * VERTICAL_SEPARATION);    // space the pegs vertically starting from start_y and incrementing by VERTICAL_SEPARATION
-
-      fillCircle(fix2int15(pegs[peg_index].x), fix2int15(pegs[peg_index].y), PEG_RADIUS, GREEN);
-      //drawCircle(fix2int15(pegs[peg_index].x), fix2int15(pegs[peg_index].y), PEG_RADIUS, GREEN);
-
-
-      peg_index++;
-
-    }
-
-    row++;
-  }
-
+  if (debug_flag) { init_collision_debugger(); }
 }
 
-// Histogram
-void draw_histogram(){
-  //find largest value for scaling every bar height relative to the largest bin
-  int max_count = 1;
 
-  for (int i= 0; i < NUM_BINS; i++){
-    if (balls_in_bins[i] > max_count){
-      max_count = balls_in_bins[i];
-    }
-  }
-    
-  int bin_width = HORIZONTAL_SEPARATION;                     //same spacingg as pegs
-  int histogram_width = NUM_BINS * bin_width;                //total width of histogram
+// Called every frame
+void update_frame() {
+  if (debug_flag) { update_collision_debugger(); }
 
-  int start_bin_x = 322 - histogram_width / 2;                       //start x position of histogram
+  animate_ball(); 
 
-  // draw the histogram
-  for (int i = 0; i < NUM_BINS; i++){
-    int bin_height = balls_in_bins[i] * HISTOGRAM_HEIGHT / max_count;   //scale the height of each bar
-
-    // // clear old column
-
-    // draw new column (bars grow upward)
-    fillRect(start_bin_x + i * bin_width,                           // top left x position
-            HISTOGRAM_Y_START + HISTOGRAM_HEIGHT - bin_height,     // top left y position
-            bin_width - 2,                                          // width
-            bin_height,                                             // height   
-            BLUE);                                                  // color      
-
-  }
-  
-}
-
-fix15 sqrt_alpha = float2fix15(.9604);
-fix15 sqrt_beta = float2fix15(.3978);
-
-// update balls based on collision
-void update_ball_based_on_collision() {
-
-  // Each frame we update every ball
-  for (int i  = 0; i < result; i++){
-
-    // Every ball we loook at every peg
-    for (int j = 0; j < NUMBER_OF_PEGS; j++){
-
-      // Compute x and y distance between ball and peg  
-      fix15 dx = balls[i].x - pegs[j].x;
-      fix15 dy = balls[i].y - pegs[j].y;
-
-      fix15 abs_dx = absfix15(dx);
-      fix15 abs_dy = absfix15(dy);
-
-
-      // distance approximation using alpha and beta: (alpha * max(dx , dy) + beta * min(dx, dy))
-      fix15 distance ;
-      if (abs_dx <= abs_dy) {
-        distance = multfix15(abs_dy , sqrt_alpha) + multfix15(abs_dx , sqrt_beta);
-      } else {
-        distance  = multfix15(abs_dx , sqrt_alpha) + multfix15(abs_dy , sqrt_beta);
-      }
-  
-
-      if (distance <= int2fix15(BALL_RADIUS + PEG_RADIUS)) {
-            // calculate the normal vector that points from the ball to the peg
-            fix15 normal_x = divfix(dx, distance);
-            fix15 normal_y = divfix(dy, distance);
-
-            // collision physics
-            fix15 dot = multfix15(normal_x, balls[i].vx) + 
-                        multfix15(normal_y, balls[i].vy);
-
-            fix15 intermediate_term = multfix15(int2fix15(-2), dot);
-
-          // Are the ball velocity and normal vectors in opposite directions?
-          if (intermediate_term > 0) {
-            
-            // Teleport it outside the collision distnace with the peg
-            balls[i].x =
-                  pegs[j].x+ multfix15(normal_x , (distance + int2fix15(3)));
-            balls[i].y =
-                  pegs[j].y + multfix15(normal_y , (distance + int2fix15(3)));
-
-            // Update the ball velocity
-            balls[i].vx = balls[i].vx + multfix15(normal_x , intermediate_term);
-            balls[i].vy = balls[i].vy + multfix15(normal_y , intermediate_term);
-
-            //Did we just strike a new peg?
-            if (j != balls[i].last_peg){
-              //Make a thunk sound by starting the control channel
-              dma_start_channel_mask(1u << ctrl_chan);
-
-              // update last peg
-              balls[i].last_peg = j;
-            }
-
-            // Remove some energy from the ball
-            balls[i].vx = multfix15(balls[i].vx , BOUNCINESS);
-            balls[i].vy = multfix15(balls[i].vy , BOUNCINESS);
-          }
-      }
-    }
-  
-      //Re-spwan any balls that hit thru bottom
-      if (topHistogramTop(balls[i].y)){
-        total_balls += 1;
-
-        //find which bin the ball fallls into
-        int bin_width = HORIZONTAL_SEPARATION;                     //same spacingg as pegs
-        int start_bin_x = 322 - NUM_BINS * bin_width / 2;                       //start x position of histogram
-
-        int bin_index = (fix2int15(balls[i].x) - start_bin_x) / bin_width;
-        if (bin_index >= 0 && bin_index < NUM_BINS){
-          balls_in_bins[bin_index] += 1;
-        }
-
-        spawn_ball(&balls[i]);
-      }
-
-      //Apply gravity 
-      balls[i].vy = balls[i].vy + GRAVITY;
-
-      //use the ball's velocity to update it's position
-      balls[i].x  = balls[i].x + balls[i].vx ;
-      balls[i].y  = balls[i].y + balls[i].vy ;
-  }
+  if (check_collision()) { on_collision(); }
 }
 
 
@@ -414,61 +358,17 @@ void update_ball_based_on_collision() {
     - Time since boot
 */
 static PT_THREAD (protothread_write_to_screen(struct pt *pt)){
-  // Mark beginning of thread
-  PT_BEGIN(pt);
+    // Mark beginning of thread
+    PT_BEGIN(pt);
 
-  // some varibales
-  static char balls_being_animated[40];
-  static char total_number_of_balls_since_reset[40];
-  static char time_since_reset[40];
-  static char bounciness_string[40];
-  static char gravity_string[40];
-  static int time = 0;
+    // start();
 
-  while(1) {  
-      //wait for 0.1 sec
+    while(1) {
       PT_YIELD_usec(1000000);
 
-      fillRect(0, 0, 160, 100, BLACK);
-
-      time += 1;
-
-      setTextColor(WHITE);
-
-      // number of balls being animated
-      setTextSize(1);
-      setCursor(20 , 20);
-      sprintf(balls_being_animated, "Active Particles: %d", result);
-      writeString(balls_being_animated);
-
-      // total number of balls that have fallen through the board since reset
-      setTextSize(1);
-      setCursor(20 , 40);
-      sprintf(total_number_of_balls_since_reset, "Total Balls: %d", total_balls);
-      writeString(total_number_of_balls_since_reset);
-
-      //time since boot 
-      setTextSize(1);
-      setCursor(20 , 60);
-      sprintf(time_since_reset, "Time elapsed: %d", time);
-      writeString(time_since_reset);
-
-      // Bounciness 
-      setTextSize(1);
-      setCursor(20 , 80);
-      sprintf(bounciness_string, "Bounciness: %.2f", fix2float15(BOUNCINESS));
-      writeString(bounciness_string);
-
-      //Gravity
-      setTextSize(1);
-      setCursor(20 , 100);
-      sprintf(gravity_string, "Gravity: %.2f", fix2float15(GRAVITY));
-      writeString(gravity_string);
-
-  }
-
+      
+    } // END WHILE(1)
   PT_END(pt);
-
 }
 
 // Animation on core 0
@@ -478,55 +378,17 @@ static PT_THREAD (protothread_anim(struct pt *pt))
     PT_BEGIN(pt);
 
     // Variables for maintaining frame rate
-    static int begin_time ;
-    static int spare_time ;
+    static int begin_time;
+    static int spare_time;
 
-    //intialze the balls
-    initBalls();
+    start();
 
-    // spawn balls 
-    for (int i  = 0; i < result; i++){
-      spawn_ball(&balls[i]);
-    }
-    
     while(1) {
       // Measure time at start of thread
       begin_time = time_us_32() ;   
 
-      //read potentiometer
-      result = adc_read();
-      printf("%d\n", result);
+      update_frame();
 
-      //reset the histogram bins after getting the new potentiometer value
-      // for (int i= 0; i < NUM_BINS; i++){
-      //   balls_in_bins[i] = 0;
-      // }
-
-      // erase the old balls
-      for (int i  = 0; i < result; i++){
-        fillCircle(fix2int15(balls[i].x), fix2int15(balls[i].y), BALL_RADIUS, BLACK);
-        //drawCircle(fix2int15(balls[i].x), fix2int15(balls[i].y), BALL_RADIUS, BLACK);
-      }
-
-      // update all balls once 
-      update_ball_based_on_collision();
-  
-      // redraw new balls 
-      for (int i  = 0; i < result; i++){
-        fillCircle(fix2int15(balls[i].x), fix2int15(balls[i].y), BALL_RADIUS, RED);
-        //drawCircle(fix2int15(balls[i].x), fix2int15(balls[i].y), BALL_RADIUS, RED);
-      }
-
-      //draw new peg 
-      draw_pegs();
-
-      //clear old histogram
-      //clear old colums
-      clearLowFrame(HISTOGRAM_Y_START, BLACK);
-
-      //draw histogram
-      draw_histogram();
-    
       // delay in accordance with frame rate
       spare_time = FRAME_RATE - (time_us_32() - begin_time) ;
       // yield for necessary amount of time
@@ -544,7 +406,7 @@ static PT_THREAD (protothread_anim(struct pt *pt))
 // ========================================
 void core1_main(){
   // Add animation thread
-  // pt_add_thread(protothread_anim1);
+  // pt_add_thread(protothread_anim);
   // Start the scheduler
   pt_schedule_start ;
 
