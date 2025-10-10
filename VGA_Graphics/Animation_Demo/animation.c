@@ -172,6 +172,9 @@ void DMA_setup() {
 #define BOUNCINESS float2fix15(0.5)
 
 #define X_CENTER int2fix15(320)
+#define VERTICAL_SEPARATION 19
+#define HORIZONTAL_SEPARATION 38
+#define NUMBER_OF_PEGS 136   // number of pegs = n(n+1)/2 = 16 (16 + 1) / 2 = 16 * 17 / 2 = 136 pegs
 
 
 
@@ -217,29 +220,55 @@ typedef struct {
 // Set to true to activate debug mode
 bool debug_flag = false;
 
-Peg peg;
+Peg pegs[136];
 
 // Sets inital peg parameters
-void init_peg() {
-  peg.x = X_CENTER;
-  peg.y = int2fix15(75);
-  
+void init_pegs() {
+  const int screen_center_x = 320;         // middle of screen( 640 / 2 )
+  const int start_y = 60;                  // start y position for the first peg
+
+  int row = 0;
+  int peg_index = 0;
+
+  while (peg_index < NUMBER_OF_PEGS){
+    int pegs_in_row = row + 1;              // peg in this row so row 0 has 1 peg, row 1 has 2 pegs, row 2 has 3 and so on
+    int start_x = screen_center_x - ((pegs_in_row - 1) * HORIZONTAL_SEPARATION) / 2;  // center each row by shifting first peg to the left so 1st row is at 320, 
+                                                                                      // 2nd row is at 301 and 339 , 3rd row is at 282, 320 and 358 etc
+
+    // inner loop to draw each peg in the row
+    for (int col = 0; col < pegs_in_row; col ++){
+      pegs[peg_index].x = int2fix15(start_x + col * HORIZONTAL_SEPARATION);  // space the pegs horizontally starting from start_x and incrementing by HORIZONTAL_SEPARATION
+      pegs[peg_index].y = int2fix15(start_y + row * VERTICAL_SEPARATION);    // space the pegs vertically starting from start_y and incrementing by VERTICAL_SEPARATION
+
+      fillCircle(fix2int15(pegs[peg_index].x), fix2int15(pegs[peg_index].y), PEG_RADIUS, GREEN);
+      
+      peg_index++;
+    }
+    row++;
+  }
+}
+
+void update_peg(Peg peg) {
   fillCircle(fix2int15(peg.x), fix2int15(peg.y), PEG_RADIUS, GREEN);
 }
 
-void update_peg() {
-  fillCircle(fix2int15(peg.x), fix2int15(peg.y), PEG_RADIUS, GREEN);
+
+Ball balls[4096];
+void init_balls() { 
+  for (int i = 0; i < 4096; i++) {
+    fix15 rand_vx = ((int2fix15(rand() & 0xffff)>>16) - (int2fix15(1)>>1));
+
+    balls[i].x = X_CENTER;
+    balls[i].y = int2fix15(0);
+    balls[i].vx = rand_vx;
+    balls[i].vy = int2fix15(0);
+
+    fillCircle(fix2int15(balls[i].x), fix2int15(balls[i].y), BALL_RADIUS, LIGHT_BLUE);
+  }
 }
 
-void animate_peg() {
-  update_peg();
-}
-
-
-Ball ball;
-
-void spawn_ball() {
-  fillCircle(fix2int15(ball.x), fix2int15(ball.y), BALL_RADIUS, BLACK);
+void spawn_ball(Ball ball) {
+  clear_ball(ball);
 
   fix15 rand_vx = ((int2fix15(rand() & 0xffff)>>16) - (int2fix15(1)>>1));
 
@@ -248,13 +277,13 @@ void spawn_ball() {
   ball.vx = rand_vx;
   ball.vy = int2fix15(0);
 
-  fillCircle(fix2int15(ball.x), fix2int15(ball.y), BALL_RADIUS, LIGHT_BLUE);
+  draw_ball(ball);
 }
 
-void clear_ball() { fillCircle(fix2int15(ball.x), fix2int15(ball.y), BALL_RADIUS, BLACK); }
-void draw_ball() { fillCircle(fix2int15(ball.x), fix2int15(ball.y), BALL_RADIUS, LIGHT_BLUE); }
+void clear_ball(Ball ball) { fillCircle(fix2int15(ball.x), fix2int15(ball.y), BALL_RADIUS, BLACK); }
+void draw_ball(Ball ball) { fillCircle(fix2int15(ball.x), fix2int15(ball.y), BALL_RADIUS, LIGHT_BLUE); }
 
-void update_ball() {
+void update_ball(Ball ball) {
   // Update ball position with velocity
   ball.x = ball.x + ball.vx;
   ball.y = ball.y + ball.vy;
@@ -263,32 +292,31 @@ void update_ball() {
   ball.vy = ball.vy + GRAVITY;
 }
 
-void animate_ball() {
+void animate_ball(Ball ball) {
   // Erase previous ball first
-  clear_ball();
+  clear_ball(ball);
 
   // Update ball's physical parameters
-  update_ball();
+  update_ball(ball);
 
   // Draw new ball with updated information
-  draw_ball();
+  draw_ball(ball);
 
   if (ball.y >= int2fix15(480)) {
-    spawn_ball();
+    spawn_ball(ball);
   }
 }
 
-// Collision variables
-fix15 next_ball_x() { return ball.x + ball.vx; }
-fix15 next_ball_y() { return ball.y + ball.vy; }
 
-fix15 dx;
-fix15 dy;
-fix15 dr;
 
 // Do this on collision
-void on_collision() {
-  clear_ball();
+void on_collision(Ball ball, Peg peg) {
+  clear_ball(ball);
+
+  // 1D deltas between center of ball and center of peg
+  fix15 dx = ball.x - peg.x;
+  fix15 dy = ball.y - peg.y;
+  fix15 dr = fixmag(dx, dy);
 
   fix15 normal_x = divfix(dx, dr);
   fix15 normal_y = divfix(dy, dr);
@@ -301,40 +329,31 @@ void on_collision() {
     ball.vx = ball.vx + multfix15(normal_x, intermediate_term);
     ball.vy = ball.vy + multfix15(normal_y, intermediate_term);
   }
-  update_peg();
+
+  update_peg(peg);
 }
 
-// Checks if the ball collided every frame
-bool check_collision() {
+// Checks if the ball collided with peg
+bool check_collision(Ball ball, Peg peg) {
 
   // 1D deltas between center of ball and center of peg
-  fix15 next_dx = next_ball_x() - peg.x;
-  fix15 next_dy = next_ball_y() - peg.y;
-  fix15 next_dr = fixmag(next_dx, next_dy);
-  dx = ball.x - peg.x;
-  dy = ball.y - peg.y;
-  dr = fixmag(dx, dy);
-  
-  fix15 avg_dx = divfix(next_dx + dx, int2fix15(2));
-  fix15 avg_dy = divfix(next_dy + dy, int2fix15(2));
-  fix15 avg_dr = divfix(next_dr + dr, int2fix15(2));
-
-
+  fix15 dx = ball.x - peg.x;
+  fix15 dy = ball.y - peg.y;
+  fix15 dr = fixmag(dx, dy);
  
-  if (absfix15(avg_dr) <= int2fix15(PEG_RADIUS + BALL_RADIUS)) {
+  if (absfix15(dx) <= int2fix15(PEG_RADIUS + BALL_RADIUS) || absfix15(dy) <= int2fix15(PEG_RADIUS + BALL_RADIUS)) {
     return true;
   }
   return false;
 }
-
 
 void init_collision_debugger() { drawCircle(320, 100, 17, RED); }
 void update_collision_debugger() { drawCircle(320, 100, 17, RED); }
 
 // Called once at program start
 void start() {
-  spawn_ball();
-  init_peg();
+  init_balls();
+  init_pegs();
 
   if (debug_flag) { init_collision_debugger(); }
 }
@@ -342,11 +361,19 @@ void start() {
 
 // Called every frame
 void update_frame() {
+
+  int numballs = adc_read();
+
   if (debug_flag) { update_collision_debugger(); }
+  for (int i = 0; i < NUMBER_OF_PEGS; i++) {
+    for (int j = 0; j < numballs; j++) {
+      if (check_collision(balls[j], pegs[i])) { on_collision(balls[j], pegs[i]); }
+    }
+  }
 
-  animate_ball(); 
-
-  if (check_collision()) { on_collision(); }
+  for (int i = 0; i < numballs; i++) {
+    animate_ball(balls[i]);
+  }
 }
 
 
