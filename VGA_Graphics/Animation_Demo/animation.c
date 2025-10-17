@@ -1,4 +1,3 @@
-
 /**
  * Hunter Adams (vha3@cornell.edu)
  * 
@@ -65,10 +64,17 @@ typedef signed int fix15 ;
 // uS per frame
 #define FRAME_RATE 33000
 #define POTENTIOMETER_OUTPUT_PIN 27
+#define BUTTON_PIN 14 // GPIO pin for button
 
 
 // the color of the boid
 char color = WHITE;
+
+
+// Global variables for animation
+int new_ball_count = 0;
+int prev_frame_balls = 0;
+float new_bounciness = 0.5f;
 
 
 /*
@@ -175,21 +181,30 @@ void DMA_setup() {
 }
 
 
-#define BALL_RADIUS 4
-#define PEG_RADIUS  6
-#define GRAVITY float2fix15(0.5)
-#define BOUNCINESS float2fix15(0.5)
+// #define BALL_RADIUS 4
+// #define PEG_RADIUS  6
+#define BALL_RADIUS int2fix15(2)
+#define PEG_RADIUS int2fix15(6)
+#define GRAVITY float2fix15(0.6)
+fix15 BOUNCINESS = float2fix15(0.5);
 #define VERTICAL_SEPARATION 19
 #define HORIZONTAL_SEPARATION 38
 #define NUMBER_OF_PEGS 136   // number of pegs = n(n+1)/2 = 16 (16 + 1) / 2 = 16 * 17 / 2 = 136 pegs 
 
-
+#define SCREEN_CENTER 320
+#define AVAILABLE_HEIGHT 90
 //global variable for number of balls
 uint16_t result;
+#define MAX_BALLS_30FPS 100  // Maximum balls that can run at 30fps
+
+
+
+const int number_of_pegs = 136;   // Changed to get 16 row triangle peg
+const int num_pegs_last_row = 16; // Last row should have 16 pegs ([0...15])
 
 // Histogram Specs
-#define NUM_BINS 17                               // total no of bins 17 since we have 15 spaces btwn the 16 pegs plus two more for the edges
-int balls_in_bins[NUM_BINS];                      //counter for each bin
+#define BINS 17                               // total no of bins 17 since we have 15 spaces btwn the 16 pegs plus two more for the edges
+int balls_in_bins[BINS];                      //counter for each bin
 
 /*
   Math for space left for histogram
@@ -200,6 +215,10 @@ int balls_in_bins[NUM_BINS];                      //counter for each bin
 
 #define HISTOGRAM_Y_START 360 
 #define HISTOGRAM_HEIGHT  100 
+
+
+// Variable to determine how many balls have spawned in total
+int TOTAL_BALLS = 0;
 
 // Ball Struct 
 typedef struct {
@@ -215,9 +234,27 @@ typedef struct {
   fix15 y;
 } Peg;
 
+typedef struct {
+  fix15 x;
+  fix15 y;
+  fix15 height;
+  fix15 width;
+} Histogram;
+
+
+volatile enum {
+  RESET,
+  ADJUST_BALLS,
+  ADJUST_BOUNCINESS,
+} button_state = RESET;
+
+uint16_t adc_return = 0;
+
 // Global one ball + one peg 
 Ball balls[4096];
-
+Peg last_peg = {0, 0};
+// histogram
+Histogram histogram[BINS];
 //initialize the ball member values
 void initBalls(){
   for (int i  = 0; i < 4096; i++){
@@ -236,172 +273,206 @@ Peg pegs[NUMBER_OF_PEGS];        // global array that stores the position of all
 
 int total_balls = 0;              // total number of balls that have fallen through the board
 
-// ball starts at the top(centered) and falls down with a small random x velocity
-void spawn_ball(Ball* b) {
-  b->x = int2fix15(320);
-  b->y = int2fix15(0);
+// Spawn a ball from top of screen
+void spawn_ball(fix15 *x, fix15 *y, fix15 *vx, fix15 *vy) {
+  *x = int2fix15(320);
+  *y = int2fix15(0);  
+
   fix15 rand_vx = ((int2fix15(rand() & 0xffff)>>16) - (int2fix15(1)>>1));
-  b->vx = rand_vx;
-  b->vy = int2fix15(0);
-  b->last_peg = -1;                        //here I reset the last peg to -1 when we spawn a new ball
+  *vx = rand_vx << 2;
+  
+  *vy = int2fix15(0);
+
+  TOTAL_BALLS += 1;
 }
 
 
-// function to draw pegs on screen: 16 rows 
-void draw_pegs(){
-  const int screen_center_x = 320;         // middle of screen( 640 / 2 )
-  const int start_y = 60;                  // start y position for the first peg
+// Draw the pegs on the screen
+void draw_pegs() {
+  const int screen_center_x = 320;
+  const int start_y = 60;
 
   int row = 0;
   int peg_index = 0;
 
-  while (peg_index < NUMBER_OF_PEGS){
-    int pegs_in_row = row + 1;              // peg in this row so row 0 has 1 peg, row 1 has 2 pegs, row 2 has 3 and so on
-    int start_x = screen_center_x - ((pegs_in_row - 1) * HORIZONTAL_SEPARATION) / 2;  // center each row by shifting first peg to the left so 1st row is at 320, 
-                                                                                      // 2nd row is at 301 and 339 , 3rd row is a7 282, 320 and 358 etc
+  while (peg_index < number_of_pegs) {
+    int pegs_in_row = row + 1;
+    int start_x =
+        screen_center_x - ((pegs_in_row - 1) * HORIZONTAL_SEPARATION / 2);
 
-    // inner loop to draw each peg in the row
-    for (int col = 0; col < pegs_in_row; col ++){
-      pegs[peg_index].x = int2fix15(start_x + col * HORIZONTAL_SEPARATION);  // space the pegs horizontally starting from start_x and incrementing by HORIZONTAL_SEPARATION
-      pegs[peg_index].y = int2fix15(start_y + row * VERTICAL_SEPARATION);    // space the pegs vertically starting from start_y and incrementing by VERTICAL_SEPARATION
-
-      fillCircle(fix2int15(pegs[peg_index].x), fix2int15(pegs[peg_index].y), PEG_RADIUS, GREEN);
-      //drawCircle(fix2int15(pegs[peg_index].x), fix2int15(pegs[peg_index].y), PEG_RADIUS, GREEN);
-
-
+    for (int col = 0; col < pegs_in_row; col++) {
+      pegs[peg_index].x = int2fix15((start_x + (col * HORIZONTAL_SEPARATION)));
+      pegs[peg_index].y = int2fix15((start_y + (row * VERTICAL_SEPARATION)));
+      fillCircle(fix2int15(pegs[peg_index].x), fix2int15(pegs[peg_index].y),
+                 fix2int15(PEG_RADIUS), GREEN);
       peg_index++;
-
     }
-
     row++;
   }
-
 }
 
-// Histogram
-void draw_histogram(){
-  //find largest value for scaling every bar height relative to the largest bin
-  int max_count = 1;
+// Draw the histogram on the board starting from the left.
+void draw_histogram() {
 
-  for (int i= 0; i < NUM_BINS; i++){
-    if (balls_in_bins[i] > max_count){
-      max_count = balls_in_bins[i];
+  int start_x = SCREEN_CENTER - ((BINS) * (HORIZONTAL_SEPARATION / 2));
+
+  int max_count = 0;
+  for (int i = 0; i < BINS; i++) {
+    // max_count += balls_in_bins[i];
+    if (balls_in_bins[i] > max_count) {
+      max_count += balls_in_bins[i];
     }
   }
-    
-  int bin_width = HORIZONTAL_SEPARATION;                     //same spacingg as pegs
-  int histogram_width = NUM_BINS * bin_width;                //total width of histogram
 
-  int start_bin_x = 322 - histogram_width / 2;                       //start x position of histogram
-
-  // draw the histogram
-  for (int i = 0; i < NUM_BINS; i++){
-    int bin_height = balls_in_bins[i] * HISTOGRAM_HEIGHT / max_count;   //scale the height of each bar
-
-    // // clear old column
-
-    // draw new column (bars grow upward)
-    fillRect(start_bin_x + i * bin_width,                           // top left x position
-            HISTOGRAM_Y_START + HISTOGRAM_HEIGHT - bin_height,     // top left y position
-            bin_width - 2,                                          // width
-            bin_height,                                             // height   
-            BLUE);                                                  // color      
-
+  // Dynamically adjust available height based on total balls
+  int dynamic_height = AVAILABLE_HEIGHT;
+  if (TOTAL_BALLS > 1000) {
+    // Reduce height by 5 pixels for every 1000 balls
+    dynamic_height = AVAILABLE_HEIGHT - (TOTAL_BALLS / 1000) * 5;
+    // Set minimum height to prevent the histogram from disappearing
+    if (dynamic_height < 30) {
+      dynamic_height = 30;
+    }
   }
-  
+
+  int effective_max = (max_count < 100) ? 100 : max_count;
+  fix15 scale_factor =
+      divfix(int2fix15(dynamic_height), int2fix15(effective_max));
+
+  for (int i = 0; i < BINS; i++) {
+    drawRect(fix2int15(histogram[i].x), fix2int15(histogram[i].y),
+             fix2int15(histogram[i].width), fix2int15(histogram[i].height),
+             BLACK);
+    fix15 height = multfix15(int2fix15(balls_in_bins[i]), scale_factor);
+    // Ensure a minimum height (2 pixels) for nonzero bins.
+    if (balls_in_bins[i] > 0 && height < int2fix15(2)) {
+      height = int2fix15(0);
+    }
+
+    // TODO: Room for improvement: only redraw difference in height
+    histogram[i].height = height;
+    // TODO: no need to do this everytime since width is constant
+    histogram[i].width = int2fix15((HORIZONTAL_SEPARATION));
+
+    histogram[i].x = int2fix15((start_x - 1));
+    histogram[i].y = int2fix15(479) - height;
+
+    drawRect(fix2int15(histogram[i].x), fix2int15(histogram[i].y),
+             fix2int15(histogram[i].width), fix2int15(histogram[i].height),
+             GREEN);
+
+    // Add the 2 pixels of separation
+    start_x += HORIZONTAL_SEPARATION + 1;
+  }
+}
+
+// Reset the histogram
+void reset_histogram() {
+  for (int i = 0; i < BINS; i++) {
+    balls_in_bins[i] = 0;
+    TOTAL_BALLS = 0;
+    drawRect(fix2int15(histogram[i].x), fix2int15(histogram[i].y),
+             fix2int15(histogram[i].width), AVAILABLE_HEIGHT, BLACK);
+
+    histogram[i].height = 0;
+    histogram[i].width = 0;
+  }
+  // fillRect(0, 479 - AVAILABLE_HEIGHT, 640, AVAILABLE_HEIGHT, BLACK);
 }
 
 fix15 sqrt_alpha = float2fix15(.9604);
 fix15 sqrt_beta = float2fix15(.3978);
 
 // update balls based on collision
-void update_ball_based_on_collision() {
-
-  // Each frame we update every ball
-  for (int i  = 0; i < result; i++){
-
-    // Every ball we loook at every peg
-    for (int j = 0; j < NUMBER_OF_PEGS; j++){
-
-      // Compute x and y distance between ball and peg  
+void update_based_on_collision_physics(uint16_t adc_val) {
+  int number_of_balls = (int)adc_val;
+  // Each frame, we update every ball
+  for (int i = 0; i < number_of_balls; i++) {
+    // Every ball looks at every peg ...
+    for (int j = 0; j < number_of_pegs; j++) {
+      // Compute x and y distances between ball and peg
       fix15 dx = balls[i].x - pegs[j].x;
       fix15 dy = balls[i].y - pegs[j].y;
 
       fix15 abs_dx = absfix15(dx);
       fix15 abs_dy = absfix15(dy);
 
-
-      // distance approximation using alpha and beta: (alpha * max(dx , dy) + beta * min(dx, dy))
-      fix15 distance ;
-      if (abs_dx <= abs_dy) {
-        distance = multfix15(abs_dy , sqrt_alpha) + multfix15(abs_dx , sqrt_beta);
-      } else {
-        distance  = multfix15(abs_dx , sqrt_alpha) + multfix15(abs_dy , sqrt_beta);
-      }
-  
-
-      if (distance <= int2fix15(BALL_RADIUS + PEG_RADIUS)) {
-            // calculate the normal vector that points from the ball to the peg
-            fix15 normal_x = divfix(dx, distance);
-            fix15 normal_y = divfix(dy, distance);
-
-            // collision physics
-            fix15 dot = multfix15(normal_x, balls[i].vx) + 
-                        multfix15(normal_y, balls[i].vy);
-
-            fix15 intermediate_term = multfix15(int2fix15(-2), dot);
-
-          // Are the ball velocity and normal vectors in opposite directions?
-          if (intermediate_term > 0) {
-            
-            // Teleport it outside the collision distnace with the peg
-            balls[i].x =
-                  pegs[j].x+ multfix15(normal_x , (distance + int2fix15(3)));
-            balls[i].y =
-                  pegs[j].y + multfix15(normal_y , (distance + int2fix15(3)));
-
-            // Update the ball velocity
-            balls[i].vx = balls[i].vx + multfix15(normal_x , intermediate_term);
-            balls[i].vy = balls[i].vy + multfix15(normal_y , intermediate_term);
-
-            //Did we just strike a new peg?
-            if (j != balls[i].last_peg){
-              //Make a thunk sound by starting the control channel
-              dma_start_channel_mask(1u << ctrl_chan);
-
-              // update last peg
-              balls[i].last_peg = j;
-            }
-
-            // Remove some energy from the ball
-            balls[i].vx = multfix15(balls[i].vx , BOUNCINESS);
-            balls[i].vy = multfix15(balls[i].vy , BOUNCINESS);
-          }
-      }
-    }
-  
-      //Re-spwan any balls that hit thru bottom
-      if (topHistogramTop(balls[i].y)){
-        total_balls += 1;
-
-        //find which bin the ball fallls into
-        int bin_width = HORIZONTAL_SEPARATION;                     //same spacingg as pegs
-        int start_bin_x = 322 - NUM_BINS * bin_width / 2;                       //start x position of histogram
-
-        int bin_index = (fix2int15(balls[i].x) - start_bin_x) / bin_width;
-        if (bin_index >= 0 && bin_index < NUM_BINS){
-          balls_in_bins[bin_index] += 1;
+      // Are both the x and y distances less than the collision distance
+      if ((abs_dx < (BALL_RADIUS + PEG_RADIUS)) &&
+          (abs_dy < (BALL_RADIUS + PEG_RADIUS))) {
+        // If so, compute the distance separating the ball and the peg
+        fix15 distance;
+        if (abs_dx > abs_dy) {
+          distance = abs_dx + (abs_dy >> 2);
+        } else {
+          distance = abs_dy + (abs_dx >> 2);
         }
 
-        spawn_ball(&balls[i]);
+        // Generate the normal vector that points from peg to balll
+        fix15 normal_x = divfix(dx, distance);
+        fix15 normal_y = divfix(dy, distance);
+
+        // collision physics
+        fix15 intermediate_term =
+            multfix15(-int2fix15(2), (multfix15(normal_x, balls[i].vx) +
+                                      multfix15(normal_y, balls[i].vy)));
+
+        // Are the ball and velocity and normal vectors in opposite
+        if (intermediate_term > 0) {
+          // Teleport it outside the collision distance with the peg
+          balls[i].x =
+              pegs[j].x + multfix15(normal_x, (distance + int2fix15(1)));
+          balls[i].y =
+              pegs[j].y + multfix15(normal_y, (distance + int2fix15(1)));
+
+          // Update its velocity
+          balls[i].vx = balls[i].vx + multfix15(normal_x, intermediate_term);
+          balls[i].vy = balls[i].vy + multfix15(normal_y, intermediate_term);
+
+          // Did we just strike a new peg?
+          if (j == 0 || (last_peg.x != pegs[j].x && last_peg.y != pegs[j].y)) {
+            // start the control channel
+            dma_start_channel_mask(1u << ctrl_chan);
+            // Remove some energy from the ball
+            balls[i].vx = multfix15(balls[i].vx, BOUNCINESS);
+            balls[i].vy = multfix15(balls[i].vy, BOUNCINESS);
+
+            last_peg.x = pegs[j].x;
+            last_peg.y = pegs[j].y;
+          }
+        }
       }
+    }
 
-      //Apply gravity 
-      balls[i].vy = balls[i].vy + GRAVITY;
+    // Re-spawn any balls that fall thru bottom
+    if (hitBottom(balls[i].y)) {
 
-      //use the ball's velocity to update it's position
-      balls[i].x  = balls[i].x + balls[i].vx ;
-      balls[i].y  = balls[i].y + balls[i].vy ;
+      // Determine which bin the ball fell into
+      for (int bin = 0; bin < BINS; bin++) {
+        if (balls[i].x >= histogram[bin].x &&
+            balls[i].x <= histogram[bin].x + histogram[bin].width) {
+          balls_in_bins[bin] += 1;
+          break;
+        }
+      }
+      spawn_ball(&balls[i].x, &balls[i].y, &balls[i].vx, &balls[i].vy);
+    }
+
+    // Bounce any balls that hit the top/sides
+    if (hitTop(balls[i].y)) {
+      balls[i].vy = multfix15(-int2fix15(1), balls[i].vy);
+    }
+
+    if (hitRight(balls[i].y) || hitLeft(balls[i].y)) {
+      balls[i].vx = -balls[i].vx;
+    }
+
+    // Apply gravity
+    balls[i].vy = balls[i].vy + GRAVITY;
+
+    // Use the ball's update velocity to update its position
+    balls[i].x = balls[i].x + balls[i].vx;
+    balls[i].y = balls[i].y + balls[i].vy;
   }
 }
 
@@ -413,142 +484,228 @@ void update_ball_based_on_collision() {
     - The total number of balls that have fallen through the board since reset 
     - Time since boot
 */
-static PT_THREAD (protothread_write_to_screen(struct pt *pt)){
-  // Mark beginning of thread
+// Write to screen thread
+static PT_THREAD(protothread_write_to_screen(struct pt *pt)) {
   PT_BEGIN(pt);
 
-  // some varibales
-  static char balls_being_animated[40];
-  static char total_number_of_balls_since_reset[40];
   static char time_since_reset[40];
+  static char balls_to_string[40];
+  static char total_number_since_reset[40];
   static char bounciness_string[40];
-  static char gravity_string[40];
+  static char state_string[40];
   static int time = 0;
 
-  while(1) {  
-      //wait for 0.1 sec
-      PT_YIELD_usec(1000000);
+  while(1) {
+    // Clear the text area
+    fillRect(0, 0, 200, 150, BLACK);
 
-      fillRect(0, 0, 160, 100, BLACK);
-
-      time += 1;
-
-      setTextColor(WHITE);
-
-      // number of balls being animated
-      setTextSize(1);
-      setCursor(20 , 20);
-      sprintf(balls_being_animated, "Active Particles: %d", result);
-      writeString(balls_being_animated);
-
-      // total number of balls that have fallen through the board since reset
-      setTextSize(1);
-      setCursor(20 , 40);
-      sprintf(total_number_of_balls_since_reset, "Total Balls: %d", total_balls);
-      writeString(total_number_of_balls_since_reset);
-
-      //time since boot 
-      setTextSize(1);
-      setCursor(20 , 60);
-      sprintf(time_since_reset, "Time elapsed: %d", time);
-      writeString(time_since_reset);
-
-      // Bounciness 
-      setTextSize(1);
-      setCursor(20 , 80);
-      sprintf(bounciness_string, "Bounciness: %.2f", fix2float15(BOUNCINESS));
-      writeString(bounciness_string);
-
-      //Gravity
-      setTextSize(1);
-      setCursor(20 , 100);
-      sprintf(gravity_string, "Gravity: %.2f", fix2float15(GRAVITY));
-      writeString(gravity_string);
-
+    time += 1;
+    setTextColor(WHITE);
+    setTextSize(1);
+    
+    // Display current number of balls being animated
+    setCursor(20, 20);
+    sprintf(balls_to_string, "Active Balls: %d", adc_return);
+    writeString(balls_to_string);
+    
+    // Display total number of balls that have fallen through since reset
+    setCursor(20, 40);
+    sprintf(total_number_since_reset, "Total Balls: %d", TOTAL_BALLS);
+    writeString(total_number_since_reset);
+    
+    // Display time since boot
+    setCursor(20, 60);
+    sprintf(time_since_reset, "Time: %ds", time);
+    writeString(time_since_reset);
+    
+    // Display bounciness (tunable parameter)
+    setCursor(20, 80);
+    sprintf(bounciness_string, "Bounciness: %.2f", fix2float15(BOUNCINESS));
+    writeString(bounciness_string);
+    
+    // Display current state
+    setCursor(20, 100);
+    switch(button_state) {
+      case RESET:
+        sprintf(state_string, "State: RESET");
+        break;
+      case ADJUST_BALLS:
+        sprintf(state_string, "State: ADJUST BALLS");
+        break;
+      case ADJUST_BOUNCINESS:
+        sprintf(state_string, "State: ADJUST BOUNCINESS");
+        break;
+      default:
+        sprintf(state_string, "State: UNKNOWN");
+        break;
+    }
+    writeString(state_string);
+    
+    // Update once per second
+    PT_YIELD_usec(1000000);
   }
 
   PT_END(pt);
+} // timer thread
+// Key press debouncer
+static PT_THREAD(protothread_switch(struct pt *pt)) {
+  PT_BEGIN(pt);
 
+  static enum {
+    NOT_PRESSED,
+    MAYBE_PRESSED,
+    PRESSED,
+    MAYBE_NOT_PRESSED
+  } debounce_state = NOT_PRESSED;
+
+  static int possible_press = 1;
+
+  while (1) {
+    // Note to self key press down is 0
+    bool keypress = gpio_get(BUTTON_PIN);
+
+    switch (debounce_state) {
+    case NOT_PRESSED:
+      if (keypress == 0) {
+        possible_press = keypress;
+        debounce_state = MAYBE_PRESSED;
+      }
+      break;
+
+    case MAYBE_PRESSED:
+      if (keypress == possible_press && keypress == 0) {
+        switch (button_state) {
+        case RESET:
+          reset_histogram();
+          button_state = ADJUST_BALLS;
+          break;
+        case ADJUST_BALLS:
+          reset_histogram();
+
+          button_state = ADJUST_BOUNCINESS;
+          break;
+        case ADJUST_BOUNCINESS:
+          reset_histogram();
+          button_state = RESET;
+          break;
+        default:
+          break;
+        }
+        debounce_state = PRESSED;
+      } else {
+        debounce_state = NOT_PRESSED;
+      }
+      break;
+    case PRESSED:
+      // If key is still press do nothing, otherwise transition to
+      // MAYBE_NOT_PRESSED
+      if (keypress == 1) {
+        debounce_state = MAYBE_NOT_PRESSED;
+      }
+      break;
+
+    case MAYBE_NOT_PRESSED:
+      if (keypress == 0) {
+        debounce_state = PRESSED;
+      } else {
+        debounce_state = NOT_PRESSED;
+        possible_press = 1;
+      }
+      break;
+
+    default:
+      break;
+    }
+
+    // printf("Button state: %d\n", button_state);
+
+    // Schedule to be called again in 30ms.
+    PT_YIELD_usec(30000);
+  }
+  PT_END(pt);
 }
 
+
 // Animation on core 0
-static PT_THREAD (protothread_anim(struct pt *pt))
-{
-    // Mark beginning of thread
-    PT_BEGIN(pt);
+static PT_THREAD(protothread_anim(struct pt *pt)) {
+  // Mark beginning of thread
+  PT_BEGIN(pt);
 
-    // Variables for maintaining frame rate
-    static int begin_time ;
-    static int spare_time ;
+  // Variables for maintaining frame rate
+  static int begin_time;
+  static int spare_time;
 
-    //intialze the balls
-    initBalls();
+  static int prev_frame_balls = 0;
+  static int new_ball_count = 0;
+  static float prev_bounciness = 0;
+  static uint16_t filtered_adc = 0;
+  static fix15 computed_bounciness = float2fix15(0.5);
 
-    // spawn balls 
-    for (int i  = 0; i < result; i++){
-      spawn_ball(&balls[i]);
+  // zero balls to the bins at the start
+  for (int i = 0; i < BINS; i++) {
+    balls_in_bins[i] = 0;
+  }
+
+  while (1) {
+    // Measure time at start of thread
+    begin_time = time_us_32();
+
+    // Choose what potentiometer is addressing based on button state
+    float new_bounciness;
+    switch (button_state) {
+    case RESET:
+      // reset_histogram();
+      break;
+    case ADJUST_BALLS:
+      new_ball_count = new_ball_count + (((adc_read())-new_ball_count) >> 4);
+      if (abs(new_ball_count - prev_frame_balls) > 8) {
+        reset_histogram();
+      }
+      break;
+    case ADJUST_BOUNCINESS:
+      new_bounciness =
+          new_bounciness + ((int)((adc_read() >> 4) - new_bounciness) >> 3);
+      new_bounciness = new_bounciness / 15.0;
+      computed_bounciness = float2fix15(new_bounciness);
+      if (fabs(new_bounciness - prev_bounciness) > 0.1) {
+        reset_histogram();
+        prev_bounciness = new_bounciness;
+      }
+      BOUNCINESS = computed_bounciness;
+      break;
+    default:
+      break;
     }
-    
-    while(1) {
-      // Measure time at start of thread
-      begin_time = time_us_32() ;   
 
-      //read potentiometer
-      result = adc_read();
-      printf("%d\n", result);
+    for (int i = 0; i < prev_frame_balls; i++) {
+      fillCircle(fix2int15(balls[i].x), fix2int15(balls[i].y),
+               fix2int15(BALL_RADIUS), BLACK);
+    }
+    // Spawn difference in balls
+    for (int i = prev_frame_balls; i < new_ball_count; i++) {
+      spawn_ball(&balls[i].x, &balls[i].y, &balls[i].vx, &balls[i].vy);
+    }
+    update_based_on_collision_physics(new_ball_count);
 
-      //reset the histogram bins after getting the new potentiometer value
-      // for (int i= 0; i < NUM_BINS; i++){
-      //   balls_in_bins[i] = 0;
-      // }
+    // Draw updated balls
+    for (int i = 0; i < new_ball_count; i++) {
+      fillCircle(fix2int15(balls[i].x), fix2int15(balls[i].y),
+               fix2int15(BALL_RADIUS), RED);
+    }
+    prev_frame_balls = new_ball_count;
+    adc_return = new_ball_count;
 
-      // erase the old balls
-      for (int i  = 0; i < result; i++){
-        fillCircle(fix2int15(balls[i].x), fix2int15(balls[i].y), BALL_RADIUS, BLACK);
-        //drawCircle(fix2int15(balls[i].x), fix2int15(balls[i].y), BALL_RADIUS, BLACK);
-      }
-
-      // update all balls once 
-      update_ball_based_on_collision();
-  
-      // redraw new balls 
-      for (int i  = 0; i < result; i++){
-        fillCircle(fix2int15(balls[i].x), fix2int15(balls[i].y), BALL_RADIUS, RED);
-        //drawCircle(fix2int15(balls[i].x), fix2int15(balls[i].y), BALL_RADIUS, RED);
-      }
-
-      //draw new peg 
-      draw_pegs();
-
-      //clear old histogram
-      //clear old colums
-      clearLowFrame(HISTOGRAM_Y_START, BLACK);
-
-      //draw histogram
-      draw_histogram();
-    
-      // delay in accordance with frame rate
-      spare_time = FRAME_RATE - (time_us_32() - begin_time) ;
-      // yield for necessary amount of time
-      PT_YIELD_usec(spare_time) ;
-     // NEVER exit while
-    } // END WHILE(1)
+    draw_pegs();
+    draw_histogram();
+    spare_time = FRAME_RATE - (time_us_32() - begin_time);
+    // yield for necessary amount of time
+    PT_YIELD_usec(spare_time);
+    // NEVER exit while
+  } // END WHILE(1)
   PT_END(pt);
 } // animation thread
 
 
-
-
-// ========================================
-// === core 1 main -- started in main below
-// ========================================
-void core1_main(){
-  // Add animation thread
-  // pt_add_thread(protothread_anim1);
-  // Start the scheduler
-  pt_schedule_start ;
-
-}
 
 // ========================================
 // === main
@@ -563,20 +720,30 @@ int main(){
   initVGA() ;
   DMA_setup(); // setup DMA for audio
 
-  //initialie adc
+  //initialize adc
   adc_init();
   adc_gpio_init(POTENTIOMETER_OUTPUT_PIN);
   adc_select_input(1);
 
+  //initialize button
+  gpio_init(BUTTON_PIN);
+  gpio_set_dir(BUTTON_PIN, GPIO_IN);
+  gpio_pull_up(BUTTON_PIN);
+
+
+  //initialize LED
+  gpio_init(PICO_DEFAULT_LED_PIN);
+  gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
+
   // start core 1 
-  multicore_reset_core1();
-  multicore_launch_core1(&core1_main);
+  // multicore_reset_core1();
+  // multicore_launch_core1(&core1_main);
 
   // add threads
   pt_add_thread(protothread_write_to_screen);
   pt_add_thread(protothread_anim);
+  pt_add_thread(protothread_switch);
 
   // start scheduler
   pt_schedule_start ;
 } 
-
