@@ -61,7 +61,7 @@ int threshold = 10 ;
 static struct pt_sem vga_semaphore ;
 
 // Some paramters for PWM
-#define WRAPVAL 5000
+#define WRAPVAL 6000
 #define CLKDIV  25.0
 uint slice_num ;
 
