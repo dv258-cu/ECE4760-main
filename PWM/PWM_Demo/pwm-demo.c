@@ -22,6 +22,10 @@
 
 #include "pt_cornell_rp2040_v1_4.h"
 
+#include <stdint.h>
+#include "hardware/adc.h"
+
+
 // PWM wrap value and clock divide value
 // For a CPU rate of 125 MHz, this gives
 // a PWM frequency of 1 kHz.
@@ -30,6 +34,22 @@
 
 // GPIO we're using for PWM
 #define PWM_OUT 4
+
+//Define for potentiometer
+#define POTENTIOMETER_OUTPUT_PIN 27
+
+// === the fixed point macros ========================================
+typedef signed int fix15 ;
+#define multfix15(a,b) ((fix15)((((signed long long)(a))*((signed long long)(b)))>>15))
+#define float2fix15(a) ((fix15)((a)*32768.0)) // 2^15
+#define fix2float15(a) ((float)(a)/32768.0)
+#define absfix15(a) abs(a) 
+#define int2fix15(a) ((fix15)(a << 15))
+#define fix2int15(a) ((int)(a >> 15))
+#define char2fix15(a) (fix15)(((fix15)(a)) << 15)
+//#define divfix(a,b) (fix15)(div_s64s64( (((signed long long)(a)) << 15), ((signed long long)(b))))
+#define divfix(a,b) ((fix15)((((int32_t)(a)) << 15) / (b)))
+volatile int pwm_read = 0;
 
 // Variable to hold PWM slice number
 uint slice_num ;
@@ -49,21 +69,32 @@ void on_pwm_wrap() {
     }
 }
 
+    void change_PWM() {
+        //0 to 4096
+        //pwm_read = fix2int15(divfix(int2fix15(adc_read()), int2fix15(4096)));
+        pwm_read = adc_read();
+        printf("%d\n" , pwm_read);
+        control = pwm_read;
+    }
+
 // User input thread
 static PT_THREAD (protothread_serial(struct pt *pt))
 {
     PT_BEGIN(pt) ;
     static int test_in ;
     while(1) {
-        sprintf(pt_serial_out_buffer, "input a duty cycle (0-6000): ");
-        serial_write ;
+        //sprintf(pt_serial_out_buffer, "input a duty cycle (0-6000): ");
+        //serial_write ;
         // spawn a thread to do the non-blocking serial read
-        serial_read ;
+        //serial_read ;
         // convert input string to number
-        sscanf(pt_serial_in_buffer,"%d", &test_in) ;
-        if (test_in > 6000) continue ;
-        else if (test_in < 0) continue ;
-        else control = test_in ;
+        //sscanf(pt_serial_in_buffer,"%d", &test_in) ;
+        //if (test_in > 6000) continue ;
+        //else if (test_in < 0) continue ;
+        //else control = test_in ;
+        change_PWM();
+
+
     }
     PT_END(pt) ;
 }
@@ -95,11 +126,16 @@ int main() {
 
 
     // This sets duty cycle
-    pwm_set_chan_level(slice_num, PWM_CHAN_A, 3125);
+    pwm_set_chan_level(slice_num, PWM_CHAN_A, 1000);
 
     // Start the channel
     pwm_set_mask_enabled((1u << slice_num));
 
+    //OUR CODE
+    adc_init();
+    adc_gpio_init(POTENTIOMETER_OUTPUT_PIN);
+    adc_select_input(1);
+    
     ////////////////////////////////////////////////////////////////////////
     ///////////////////////////// ROCK AND ROLL ////////////////////////////
     ////////////////////////////////////////////////////////////////////////
