@@ -69,6 +69,7 @@ uint slice_num ;
 // Floats for raw IMU data
 float rotation_rate;
 float gs;
+float net_angle;
 
 fix15 accel_angle;
 fix15 gyro_angle_delta;
@@ -177,8 +178,10 @@ static PT_THREAD (protothread_vga(struct pt *pt))
             // drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[1])*120.0)-OldMin)/OldRange)), RED) ;
             // drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[2])*120.0)-OldMin)/OldRange)), GREEN) ;
 
+            net_angle = fix2float15(complementary_angle - int2fix15(7));
+            float graph_angle = net_angle * 0.83333 - 5.0;
             // Draw Angle
-            drawPixel(xcoord, 360 - (int)(fix2float15(complementary_angle)), WHITE);
+            drawPixel(xcoord, 350 - (int)(graph_angle), WHITE);
 
             // Draw top plot
             drawPixel(xcoord, 230 - (int)(NewRange*((float)((fix2float15(gyro[0]))-OldMin)/OldRange)), WHITE) ;
@@ -207,7 +210,7 @@ static PT_THREAD (protothread_serial(struct pt *pt))
         PT_SEM_WAIT(pt, &runtime_semaphore);
         
 
-        printf("Angle: %f\n", fix2float15(complementary_angle));
+        printf("Angle: %f\n", net_angle);
     }
     PT_END(pt) ;
 }
