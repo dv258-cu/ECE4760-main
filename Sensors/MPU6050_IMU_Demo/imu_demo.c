@@ -59,11 +59,22 @@ int threshold = 10 ;
 
 // semaphore
 static struct pt_sem vga_semaphore ;
+static struct pt_sem runtime_semaphore;
 
 // Some paramters for PWM
 #define WRAPVAL 5000
 #define CLKDIV  25.0
 uint slice_num ;
+
+// Floats for raw IMU data
+float rotation_rate;
+float gs;
+
+fix15 accel_angle;
+fix15 gyro_angle_delta;
+fix15 complementary_angle;
+
+#define PI 3.141592653589
 
 // Interrupt service routine
 void on_pwm_wrap() {
@@ -77,8 +88,22 @@ void on_pwm_wrap() {
     // the raw measurements.
     mpu6050_read_raw(acceleration, gyro);
 
+    // SMALL ANGLE APPROXIMATION
+    // accel_angle = -multfix15(divfix(acceleration[1], acceleration[2]), oneeightyoverpi) ;
+
+    accel_angle = multfix15(float2fix15(atan2(fix2float15(-acceleration[1]), fix2float15(acceleration[2]))), oneeightyoverpi);
+
+    // Gyro angle delta (measurement times timestep) (15.16 fixed point)
+    gyro_angle_delta = multfix15(gyro[0], zeropt001) ;
+
+    // Complementary angle (degrees - 15.16 fixed point)
+    complementary_angle = multfix15(complementary_angle - gyro_angle_delta, zeropt999) + multfix15(accel_angle, zeropt001);
+    
     // Signal VGA to draw
     PT_SEM_SIGNAL(pt, &vga_semaphore);
+
+    // Signal Runtime
+    PT_SEM_SIGNAL(pt, &runtime_semaphore);
 }
 
 // Thread that draws to VGA display
@@ -111,10 +136,10 @@ static PT_THREAD (protothread_vga(struct pt *pt))
     sprintf(screentext, "0") ;
     setCursor(50, 350) ;
     writeString(screentext) ;
-    sprintf(screentext, "+2") ;
+    sprintf(screentext, "+90") ;
     setCursor(50, 280) ;
     writeString(screentext) ;
-    sprintf(screentext, "-2") ;
+    sprintf(screentext, "-90") ;
     setCursor(50, 425) ;
     writeString(screentext) ;
 
@@ -148,9 +173,12 @@ static PT_THREAD (protothread_vga(struct pt *pt))
             drawVLine(xcoord, 0, 480, BLACK) ;
 
             // Draw bottom plot (multiply by 120 to scale from +/-2 to +/-250)
-            drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[0])*120.0)-OldMin)/OldRange)), WHITE) ;
-            drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[1])*120.0)-OldMin)/OldRange)), RED) ;
-            drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[2])*120.0)-OldMin)/OldRange)), GREEN) ;
+            // drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[0])*120.0)-OldMin)/OldRange)), WHITE) ;
+            // drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[1])*120.0)-OldMin)/OldRange)), RED) ;
+            // drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[2])*120.0)-OldMin)/OldRange)), GREEN) ;
+
+            // Draw Angle
+            drawPixel(xcoord, 360 - (int)(fix2float15(complementary_angle)), WHITE);
 
             // Draw top plot
             drawPixel(xcoord, 230 - (int)(NewRange*((float)((fix2float15(gyro[0]))-OldMin)/OldRange)), WHITE) ;
@@ -173,29 +201,13 @@ static PT_THREAD (protothread_vga(struct pt *pt))
 // User input thread. User can change draw speed
 static PT_THREAD (protothread_serial(struct pt *pt))
 {
-    PT_BEGIN(pt) ;
-    static char classifier ;
-    static int test_in ;
-    static float float_in ;
+    PT_BEGIN(pt);
+    
     while(1) {
-        sprintf(pt_serial_out_buffer, "input a command: ");
-        serial_write ;
-        // spawn a thread to do the non-blocking serial read
-        serial_read ;
-        // convert input string to number
-        sscanf(pt_serial_in_buffer,"%c", &classifier) ;
+        PT_SEM_WAIT(pt, &runtime_semaphore);
+        
 
-        // num_independents = test_in ;
-        if (classifier=='t') {
-            sprintf(pt_serial_out_buffer, "timestep: ");
-            serial_write ;
-            serial_read ;
-            // convert input string to number
-            sscanf(pt_serial_in_buffer,"%d", &test_in) ;
-            if (test_in > 0) {
-                threshold = test_in ;
-            }
-        }
+        printf("Angle: %f\n", fix2float15(complementary_angle));
     }
     PT_END(pt) ;
 }
