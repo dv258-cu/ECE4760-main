@@ -59,11 +59,11 @@ int threshold = 10 ;
 
 // semaphore
 static struct pt_sem vga_semaphore ;
-static struct pt_sem runtime_semaphore;
+// static struct pt_sem runtime_semaphore;
 
 // Some paramters for PWM
-#define WRAPVAL 5000
-#define CLKDIV  25.0
+#define WRAPVAL 6000
+#define CLKDIV  30.0f
 uint slice_num ;
 
 // Floats for raw IMU data
@@ -74,8 +74,41 @@ float net_angle;
 fix15 accel_angle;
 fix15 gyro_angle_delta;
 fix15 complementary_angle;
+fix15 f_accel_y;
+fix15 f_accel_z;
+
+// PID Coefficients
+float kp = 10.0;
+float ki = 1/32.0;
+float kd = 1.0;
+float target_angle = 0.0;
+float prev_error = 0.0;
+
+// PWM duty cycle
+#define PWM_OUT 4
+volatile int control ;
+volatile int old_control ;
 
 #define PI 3.141592653589
+
+int pid() {
+    float error = target_angle - net_angle;
+    float d_error = error - prev_error;
+
+    float i_error = i_error + error;
+    
+
+    float p_term = (int)(kp*error);
+    float i_term = (int)(ki * (i_error / 0.001));
+    float d_term = (int)(kd * (d_error / 0.001));
+
+    prev_error = error;
+    float pid_net = p_term + i_term + d_term;
+    
+    if (error < 0) { return 0; }
+    if (pid_net >= 3000) { return 2500; }
+    else { return pid_net; }
+}
 
 // Interrupt service routine
 void on_pwm_wrap() {
@@ -92,7 +125,11 @@ void on_pwm_wrap() {
     // SMALL ANGLE APPROXIMATION
     // accel_angle = -multfix15(divfix(acceleration[1], acceleration[2]), oneeightyoverpi) ;
 
-    accel_angle = multfix15(float2fix15(atan2(fix2float15(-acceleration[1]), fix2float15(acceleration[2]))), oneeightyoverpi);
+    // filtered = filtered + (raw - filtered) >> precision
+    f_accel_y = f_accel_y + ((acceleration[1] - f_accel_y) >> 4);
+    f_accel_z = f_accel_z + ((acceleration[2] - f_accel_z) >> 4);
+
+    accel_angle = multfix15(float2fix15(atan2(fix2float15(-f_accel_y), fix2float15(f_accel_z))), oneeightyoverpi);
 
     // Gyro angle delta (measurement times timestep) (15.16 fixed point)
     gyro_angle_delta = multfix15(gyro[0], zeropt001) ;
@@ -104,7 +141,19 @@ void on_pwm_wrap() {
     PT_SEM_SIGNAL(pt, &vga_semaphore);
 
     // Signal Runtime
-    PT_SEM_SIGNAL(pt, &runtime_semaphore);
+    // PT_SEM_SIGNAL(pt, &runtime_semaphore);
+
+    // Clear the interrupt flag that brought us here
+    pwm_clear_irq(pwm_gpio_to_slice_num(PWM_OUT));
+    // Update duty cycle
+    if (control!=old_control) {
+        old_control = control ;
+        pwm_set_chan_level(slice_num, PWM_CHAN_A, control);
+    }
+
+    // PID Loop Cal
+    control = pid();
+    
 }
 
 // Thread that draws to VGA display
@@ -178,8 +227,9 @@ static PT_THREAD (protothread_vga(struct pt *pt))
             // drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[1])*120.0)-OldMin)/OldRange)), RED) ;
             // drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[2])*120.0)-OldMin)/OldRange)), GREEN) ;
 
-            net_angle = fix2float15(complementary_angle - int2fix15(7));
-            float graph_angle = net_angle * 0.83333 - 5.0;
+            net_angle = fix2float15(complementary_angle - int2fix15(7));    // Angle value in degrees relative to horizontal out of the table edge (+Y)
+            float graph_angle = net_angle * 0.83333 - 5.0;                  // Not used for computations -- Scaled value for accurate graph depiction
+            
             // Draw Angle
             drawPixel(xcoord, 350 - (int)(graph_angle), WHITE);
 
@@ -206,13 +256,68 @@ static PT_THREAD (protothread_serial(struct pt *pt))
 {
     PT_BEGIN(pt);
     
+    static char classifier ;
+    static int test_in ;
+    static float float_in ;
     while(1) {
-        PT_SEM_WAIT(pt, &runtime_semaphore);
-        
+        // PT_SEM_WAIT(pt, &runtime_semaphore);
 
-        printf("Angle: %f\n", net_angle);
+        sprintf(pt_serial_out_buffer, "input a command: ");
+        serial_write ;
+        // spawn a thread to do the non-blocking serial read
+        serial_read ;
+        // convert input string to number
+        sscanf(pt_serial_in_buffer,"%c", &classifier) ;
+
+        // num_independents = test_in ;
+        if (classifier=='p') {
+            sprintf(pt_serial_out_buffer, "Proportional Coefficient: ");
+            serial_write ;
+            serial_read ;
+            // convert input string to number
+            sscanf(pt_serial_in_buffer,"%f", &float_in) ;
+            if (float_in > 0) {
+                kp = float_in;
+            }
+        }
+        else if (classifier=='a') {
+            sprintf(pt_serial_out_buffer, "Target Angle: ");
+            serial_write ;
+            serial_read ;
+            // convert input string to number
+            sscanf(pt_serial_in_buffer,"%f", &float_in) ;
+            if (float_in > 0) {
+                target_angle = float_in;
+            }
+        }
+        else if (classifier=='i') {
+            sprintf(pt_serial_out_buffer, "Integral Coefficient: ");
+            serial_write ;
+            serial_read ;
+            // convert input string to number
+            sscanf(pt_serial_in_buffer,"%f", &float_in) ;
+            if (float_in > 0) {
+                ki = float_in;
+            }
+        }
+        else if (classifier=='d') {
+            sprintf(pt_serial_out_buffer, "Derivative Coefficient: ");
+            serial_write ;
+            serial_read ;
+            // convert input string to number
+            sscanf(pt_serial_in_buffer,"%f", &float_in) ;
+            if (float_in > 0) {
+                kd = float_in;
+            }
+        }
     }
+
     PT_END(pt) ;
+}
+
+void init_accel_filter() {
+    f_accel_y = int2fix15(0);
+    f_accel_z = int2fix15(0);
 }
 
 // Entry point for core 1
@@ -231,6 +336,8 @@ int main() {
 
     // Initialize VGA
     initVGA() ;
+
+    init_accel_filter();
 
     ////////////////////////////////////////////////////////////////////////
     ///////////////////////// I2C CONFIGURATION ////////////////////////////
